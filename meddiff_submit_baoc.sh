@@ -10,8 +10,8 @@ submit_job() {
     job_name=$(basename "$1" .json)
 
     echo "-"
-    echo "sbatch --job-name=$job_name /cluster/home/baoc/dev/medicaldiffusion/meddiff.submit $1 $2 $3"
-    sbatch --job-name=$job_name /cluster/home/baoc/dev/medicaldiffusion/meddiff.submit $1 $2 $3
+    echo "sbatch --job-name=$job_name /cluster/home/baoc/sandbox/medicaldiffusion/meddiff.submit $1 $2 $3"
+    sbatch --job-name=$job_name /cluster/home/baoc/sandbox/medicaldiffusion/meddiff.submit $1 $2 $3
 
     # prevent race conditions
     sleep $((RANDOM % 21 + 5))
@@ -21,8 +21,8 @@ submit_job_allnodes() {
     job_name=$(basename "$1" .json)
 
     echo "-"
-    echo "sbatch --verbose --job-name=$job_name --partition=p_gpu_all /cluster/home/baoc/dev/medicaldiffusion/meddiff.submit $1 $2 $3"
-    sbatch --job-name=$job_name --partition=p_gpu_all /cluster/home/baoc/dev/medicaldiffusion/meddiff.submit $1 $2 $3
+    echo "sbatch --verbose --job-name=$job_name --partition=p_gpu_all /cluster/home/baoc/sandbox/medicaldiffusion/meddiff.submit $1 $2 $3"
+    sbatch --job-name=$job_name --partition=p_gpu_all /cluster/home/baoc/sandbox/medicaldiffusion/meddiff.submit $1 $2 $3
 
     # prevent race conditions
     sleep $((RANDOM % 21 + 5))

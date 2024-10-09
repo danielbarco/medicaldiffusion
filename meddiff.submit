@@ -1,0 +1,294 @@
+#!/bin/bash
+#SBATCH --time=1400
+#SBATCH --job-name=meddiff-runner
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:1
+#SBATCH --mem=120G 
+#SBATCH --partition=p_gpu_high_end
+#SBATCH --account=cai_ivs
+#SBATCH --mail-user=baoc@zhaw.ch
+#SBATCH --output=/cluster/home/baoc/sandbox/medicaldiffusion/slurm_logs/%j_%N__meddiff_runner.out
+#SBATCH --error=/cluster/home/baoc/sandbox/medicaldiffusion/slurm_logs/%j_%N__meddiff_runner.err
+#SBATCH --signal=B:SIGUSR1@600
+
+
+# replace username in submit script
+# sed "s/baoc/$USER/g" meddiff.submit.template > meddiff.submit
+
+# ------------
+# NOTES
+# ------------
+# - Create a log dir directory before submitting this script (e.g. /cluster/home/baoc/meddiff_logs)
+# - run it with: $ sbatch ~/dev/medicaldiffusion/meddiff.submit PATH_TO_EXPERIMENT.json
+#   e.g. sbatch ~/dev/medicaldiffusion/meddiff.submit ~/dev/medicaldiffusion/experiments/simpsons/homer_lisa_class_dense.json
+# - overwrite a parameter
+#   e.g. sbatch --nodelist=sanjose ~/dev/medicaldiffusion/meddiff.submit ~/dev/medicaldiffusion/experiments/simpsons/homer_lisa_class_dense.json
+# - if the number of epochs defined in the experiment file is not reached at time out, the script will resubmit itself!
+# - SIGUSR1@60 means that the stop signal is send 60 seconds before job termination. Make sure that this is long enough copy
+#   all your data back to the storage cluster.
+# - There is a small risk of a race condition if meddiff was to produce a new checkpoint at exactly during the time when
+#   sig_handler_USR1 is called. TODO: check if that needs a mitigation.
+# - Careful: The experiment file is re-read every time; when you change it during training, it will read the new parameters at resubmission!
+#   TODO: check if that needs a mitigation? 
+
+# ------------
+# TODOs
+# ------------
+# - make username independent
+
+
+# Set this to false to disable debug prints
+DEBUG=false
+
+script_start=$(date +%s.%N)
+
+# meddiff writes all outputs to this dir
+SCRATCH_PATH="/scratch/meddiff_results/"
+
+# at job termination, everything is moved here:
+RESULTS_PATH=/cluster/data/baoc/sandbox/results
+
+mkdir -p $SCRATCH_PATH
+mkdir -p $RESULTS_PATH
+
+sleep 1
+
+# default experiment: meddiff.submit expfile.json -runtest
+# at experiment launch:
+# $1 # path to experiment file
+# $2 / param2_opt = "-runtest" -> this is removed by the submit script and not forwarded to meddiff. only at training termination, a new job with -nt -te will be launched
+# $3 / param3_opt = None
+# $4 / param4_opt = None
+# at resubmit:
+# $1 # path to experiment file
+# $2 / param2_opt = "-runtest"
+# $3 / param3_opt = -rp
+# $4 / param4_opt = actual path for -rp
+
+param1_exp_path=$1 # path to experiment file
+param2_opt=$2
+param3_opt=$3 
+param4_opt=$4
+
+
+echo ----------------------------------------------------------------------------------
+echo "Start date: $(date +"%Y-%m-%d %H:%M:%S")" 
+echo "Hostname: $(hostname)"
+echo "Experiment: $param1_exp_path"
+echo "param2_opt: $param2_opt"
+echo "param3_opt: $param3_opt"
+echo "param4_opt: $param4_opt"
+echo ----------------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------------
+# Stop signal handler
+# ----------------------------------------------------------------------------------
+
+sig_handler_USR1()
+{
+    echo "++++++++++++++++++++++++++++++++++++++"
+    echo "STOP SIGNAL DETECTED -  `date`"
+    echo experiment file: $param1_exp_path
+    echo "++++++++++++++++++++++++++++++++++++++"
+
+    echo Copy files from $SCRATCH_PATH to $RESULTS_PATH.
+    cp -r $SCRATCH_PATH* $RESULTS_PATH
+    sleep 1
+    echo "File copy done."
+
+    # resubmit the job pointing to the last checkpoint file.
+    most_recent_chp=$(find $SCRATCH_PATH -name checkpoint* | head -n 1 | awk -F './meddiff_results/' '{print $2}')
+    most_recent_chp_path=${RESULTS_PATH}/${most_recent_chp}
+    echo "Most recent checkpoint_path: $most_recent_chp_path"
+
+
+    if [ "$param2_opt" = "-rp" ]; then
+        param2_opt=""
+        param3_opt=""
+    fi
+    if [ "$param3_opt" = "-rp" ]; then
+        param3_opt=""
+        # param4_opt=""
+    fi
+    # if [ "$param4_opt" = "-rp" ]; then
+    #     param4_opt=""
+    # fi
+
+    sleep 1
+    echo " "
+    echo submitting new job with the following command:
+    echo "sbatch --partition=$SLURM_JOB_PARTITION --job-name=meddiff-resubmit /cluster/home/baoc/dev/medicaldiffusion/meddiff.submit $param1_exp_path $param2_opt $param3_opt -rp $most_recent_chp_path"
+    echo "param1_exp_path: $param1_exp_path"
+    echo "param2_opt: $param2_opt"
+    echo "param3_opt: $param3_opt"
+    echo "most_recent_chp_path: $most_recent_chp_path"
+    sbatch --partition=$SLURM_JOB_PARTITION --job-name=meddiff-resubmit /cluster/home/baoc/sandbox/medicaldiffusion/meddiff.submit $param1_exp_path $param2_opt $param3_opt -rp $most_recent_chp_path
+
+    sleep 1
+    exit 0
+
+}
+
+# associate the function "sig_handler_USR1" with the USR1 signal
+trap 'sig_handler_USR1' USR1
+
+
+echo ------------------------
+# ----------------------------------------------------------------------------------
+# create / load python venv
+# ----------------------------------------------------------------------------------
+
+env_name="venv_meddiff"
+venv_base_dir="/raid/persistent_scratch/baoc/venvs"
+venv_path="$venv_base_dir/$env_name"
+
+# Check if the virtual environment exists
+if [ -d "$venv_path" ]; then
+    echo "Virtual environment ($env_name) found. Activating..."
+    source "$venv_path/bin/activate"
+else
+    echo "Virtual environment ($env_name) not found. Creating..."
+    module load python/3.10.14
+    virtualenv $venv_path
+    unset PIP_TARGET
+    unset PYTHONPATH
+    source "$venv_path/bin/activate"
+fi
+
+echo ------------------------
+
+# read requirements.txt file and store valid packages into list
+# this is necessary in case the requirements.txt changes
+declare -A packages
+while IFS= read -r line || [ -n "$line" ]; do
+    # Strip comments from the line
+    line="${line%%#*}"
+    # Remove trailing spaces
+    line="${line%"${line##*[![:space:]]}"}"
+    # Skip empty lines
+    [[ -z "$line" ]] && continue
+    # Split the line into package and version if it matches the pattern package==version
+    if [[ "$line" =~ ^[a-zA-Z0-9_\-]+==[0-9\.]+$ ]]; then
+        IFS='==' read -r package version <<< "${line/==/==}"
+        # Remove leading = from version
+        version=${version#=}
+        # Add the package and version to the associative array
+        packages[$package]=$version
+    else
+        echo "Ignoring invalid line: $line"
+    fi
+done < /cluster/home/baoc/sandbox/medicaldiffusion/requirements.txt
+
+echo ------------------------
+
+# Check if the correct package versions are installed:
+for package in "${!packages[@]}"; do
+    version=${packages[$package]}
+    installed_version=$(pip3 show $package | grep "Version:" | cut -d' ' -f2)
+    if [ -z "$installed_version" ]; then
+        echo "Installing $package==$version..."
+        pip3 install "$package==$version"
+    elif [ "$installed_version" != "$version" ]; then
+        echo "$package is installed but version $installed_version is not the required version $version. Updating..."
+        pip3 install "$package==$version"
+    fi
+done
+
+check_and_install() {
+    package=$1
+    if ! pip3 list | grep -F "$package" > /dev/null; then
+        echo "Package $package is not installed. Installing..."
+        pip3 install -e "/cluster/home/baoc/sandbox/$package/"
+    else
+        echo "Package $package is already installed."
+    fi
+}
+
+check_and_install medicaldiffusion
+
+if [ "$DEBUG" = true ]; then
+    echo ------------------------
+    echo "list all packages:"
+    pip3 list
+    echo ------------------------
+fi
+
+# ----------------------------------------------------------------------------------
+# Run training
+# ----------------------------------------------------------------------------------
+
+# Loop through all the parameters
+for param in "$@"
+do
+    if [ "$param" == "-rp" ]; then
+        echo ------------------------
+        echo "Parameter '-rp' found - RESUME TRAINING"
+        echo ------------------------
+    fi
+done
+
+# check if automatic test was requested, if so, submit it as new job afterwards
+# automatic_test=false
+# if [ "$param2_opt" = "-runtest" ]; then
+#     param2_opt=""
+#     automatic_test=true
+# fi
+# if [ "$param3_opt" = "-runtest" ]; then
+#     param3_opt=""
+#     automatic_test=true
+# fi
+# if [ "$param4_opt" = "-runtest" ]; then
+#     param4_opt=""
+#     automatic_test=true
+# fi
+
+
+compute_start=$(date +%s.%N)
+echo ----------------------------------------------------------------------------------
+echo "Running experiment: $param1_exp_path"
+# echo "Running automatic test: $automatic_test"
+echo "param2_opt: $param2_opt"
+echo "param3_opt: $param3_opt"
+echo "param4_opt: $param4_opt"
+echo ----------------------------------------------------------------------------------
+PL_TORCH_DISTRIBUTED_BACKEND=gloo python train/train_vqgan.py dataset=brats dataset.root_dir=$param1_exp_path model=vq_gan_3d model.gpus=1 model.default_root_dir_postfix='flair' model.precision=16 model.embedding_dim=8 model.n_hiddens=16 model.downsample=[2,2,2] model.num_workers=32 model.gradient_clip_val=1.0 model.lr=3e-4 model.discriminator_iter_start=10000 model.perceptual_weight=4 model.image_gan_weight=1 model.video_gan_weight=1 model.gan_feat_weight=4 model.batch_size=2 model.n_codes=16384 model.accumulate_grad_batches=1 
+
+
+# wait for all background jobs to finish!
+wait
+
+
+# ----------------------------------------------------------------------------------
+# Finalize
+# ----------------------------------------------------------------------------------
+echo ---------------------------------------------
+echo "DONE - Copy results back to storage cluster"
+echo ---------------------------------------------
+# this produces an error with -nt -ta
+cp -r $SCRATCH_PATH* $RESULTS_PATH
+
+end=$(date +%s.%N)
+script_time=$(echo "$end - $script_start" | bc)
+compute_time=$(echo "$end - $compute_start" | bc)
+echo ------------------------
+echo "Script execution time: $script_time seconds"
+echo "Compute time: $compute_time seconds"
+echo ------------------------
+
+
+# start test as new job
+if [ "$automatic_test" == true ]; then
+    echo ------------------------
+    echo "Starting automatic test.."
+    echo ------------------------
+
+    sleep 1
+    echo submitting new job with the following command:
+    echo "sbatch --partition=$SLURM_JOB_PARTITION --job-name=meddiff-test /cluster/home/baoc/sandbox/medicaldiffusion/meddiff.submit $param1_exp_path -nt -ta"
+    sbatch --partition=$SLURM_JOB_PARTITION --job-name=meddiff-test /cluster/home/baoc/sandbox/medicaldiffusion/meddiff.submit $param1_exp_path -nt -ta
+    sleep 1
+    exit 0
+fi
+
