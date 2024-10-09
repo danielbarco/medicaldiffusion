@@ -58,6 +58,7 @@ def run(cfg: DictConfig):
                 log_folder = folder
         if len(log_folder) > 0:
             ckpt_folder = os.path.join(base_dir, log_folder, 'checkpoints')
+            os.makedirs(ckpt_folder, exist_ok=True)
             for fn in os.listdir(ckpt_folder):
                 if fn == 'latest_checkpoint.ckpt':
                     ckpt_file = 'latest_checkpoint_prev.ckpt'

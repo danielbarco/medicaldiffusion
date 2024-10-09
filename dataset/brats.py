@@ -20,10 +20,10 @@ class BRATSDataset(Dataset):
         self.severity = severity
         if self.train:
             self.root = os.path.join(
-                root_dir, 'MICCAI_BraTS2020_TrainingData/MICCAI_BraTS2020_TrainingData/')
+                root_dir, 'BraTS2020_TrainingData/MICCAI_BraTS2020_TrainingData/')
         else:
             self.root = os.path.join(
-                root_dir, 'MICCAI_BraTS2020_ValidationData/MICCAI_BraTS2020_ValidationData')
+                root_dir, 'BraTS2020_ValidationData/MICCAI_BraTS2020_ValidationData')
         self.imgtype = imgtype
         self.is_flip = is_flip
         self.dataset = self.get_dataset()
@@ -48,8 +48,8 @@ class BRATSDataset(Dataset):
         path = os.path.join(self.root, img_name)
 
         img = nib.load(os.path.join(
-            path, img_name+'_' + self.imgtype+'.nii.gz'))
-        gt = nib.load(os.path.join(path, img_name + '_' + 'seg.nii.gz'))
+            path, img_name+'_' + self.imgtype+'.nii'))
+        gt = nib.load(os.path.join(path, img_name + '_' + 'seg.nii'))
 
         A = np.zeros((240, 240, 166))
         G = np.zeros((240, 240, 166))

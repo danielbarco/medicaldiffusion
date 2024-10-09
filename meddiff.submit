@@ -148,14 +148,20 @@ venv_path="$venv_base_dir/$env_name"
 if [ -d "$venv_path" ]; then
     echo "Virtual environment ($env_name) found. Activating..."
     source "$venv_path/bin/activate"
+    # Upgrade pip to version 23.0
+    pip install --upgrade pip==23.0
 else
     echo "Virtual environment ($env_name) not found. Creating..."
-    module load python/3.10.14
-    virtualenv $venv_path
+    module load python/3.8.19
+    virtualenv $venv_path --python=python3.8
+
+    # Upgrade pip to version 23.0
+    pip install --upgrade pip==23.0
     unset PIP_TARGET
     unset PYTHONPATH
     source "$venv_path/bin/activate"
 fi
+
 
 echo ------------------------
 
@@ -206,7 +212,7 @@ check_and_install() {
     fi
 }
 
-check_and_install medicaldiffusion
+# check_and_install medicaldiffusion
 
 if [ "$DEBUG" = true ]; then
     echo ------------------------
@@ -254,6 +260,7 @@ echo "param3_opt: $param3_opt"
 echo "param4_opt: $param4_opt"
 echo ----------------------------------------------------------------------------------
 PL_TORCH_DISTRIBUTED_BACKEND=gloo python train/train_vqgan.py dataset=brats dataset.root_dir=$param1_exp_path model=vq_gan_3d model.gpus=1 model.default_root_dir_postfix='flair' model.precision=16 model.embedding_dim=8 model.n_hiddens=16 model.downsample=[2,2,2] model.num_workers=32 model.gradient_clip_val=1.0 model.lr=3e-4 model.discriminator_iter_start=10000 model.perceptual_weight=4 model.image_gan_weight=1 model.video_gan_weight=1 model.gan_feat_weight=4 model.batch_size=2 model.n_codes=16384 model.accumulate_grad_batches=1 
+PL_TORCH_DISTRIBUTED_BACKEND=gloo python train/train_vqgan.py dataset=brats dataset.root_dir=/cluster/data/baoc/sandbox/BraTS2020 model=vq_gan_3d model.gpus=1 model.default_root_dir_postfix='flair' model.precision=16 model.embedding_dim=8 model.n_hiddens=16 model.downsample=[2,2,2] model.num_workers=32 model.gradient_clip_val=1.0 model.lr=3e-4 model.discriminator_iter_start=10000 model.perceptual_weight=4 model.image_gan_weight=1 model.video_gan_weight=1 model.gan_feat_weight=4 model.batch_size=2 model.n_codes=16384 model.accumulate_grad_batches=1 
 
 
 # wait for all background jobs to finish!
